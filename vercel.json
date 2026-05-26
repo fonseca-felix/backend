@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "app.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "index.html.html",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/generate-text",
+      "dest": "app.py"
+    },
+    {
+      "src": "/humanize",
+      "dest": "app.py"
+    },
+    {
+      "src": "/correct",
+      "dest": "app.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "index.html.html"
+    }
+  ]
+}
