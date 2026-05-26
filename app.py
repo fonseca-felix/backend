@@ -4,6 +4,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from google import genai
 from google.genai import types
+from google.genai import errors  # Importado para capturar erros específicos da API Google
 from dotenv import load_dotenv
 
 from config import (
@@ -25,24 +26,43 @@ CORS(app)
 
 def get_gemini_client():
     """
-    Verifica se o usuário enviou uma chave própria no cabeçalho Authorization.
+    Verifica se o utilizador enviou uma chave própria no cabeçalho Authorization.
     Caso contrário, tenta utilizar a chave padrão definida no arquivo .env.
     """
     auth_header = request.headers.get("Authorization", "")
     
-    # Se vier no formato "Bearer CHAVE", extrai apenas a chave
+    # Se vier no formato "Bearer CHAVE", extrai apenas o token
     if auth_header.startswith("Bearer "):
         user_key = auth_header.split(" ")[1].strip()
     else:
         user_key = auth_header.strip()
 
-    # Determina qual chave utilizar (Prioridade para a do usuário)
+    # Determina qual chave utilizar (Prioridade absoluta para a do utilizador)
     api_key = user_key if user_key else DEFAULT_GEMINI_API_KEY
 
     if not api_key:
-        raise ValueError("Chave de API do Gemini não configurada no servidor e nem fornecida pelo usuário.")
+        raise ValueError("Nenhuma chave de API do Gemini foi configurada no servidor e nem fornecida por si.")
 
     return genai.Client(api_key=api_key)
+
+
+# ─── FUNÇÃO PARA TRATAR ERROS DA API GOOGLE ──────────────────────────────────
+
+def handle_gemini_error(e):
+    """
+    Analisa o erro retornado pelo SDK da Google e gera uma mensagem limpa
+    e compreensível para o utilizador final.
+    """
+    err_msg = str(e)
+    
+    if "leaked" in err_msg.lower():
+        return "A sua chave de API pessoal foi bloqueada pela Google por motivos de segurança (vazamento de credenciais). Por favor, gere uma nova chave no Google AI Studio.", 403
+    elif "api key not valid" in err_msg.lower() or "invalid" in err_msg.lower():
+        return "A chave de API informada é inválida. Verifique se a copiou corretamente.", 401
+    elif "quota" in err_msg.lower() or "limit" in err_msg.lower():
+        return "O limite de requisições da sua chave de API foi atingido. Tente novamente mais tarde.", 429
+    
+    return f"Erro na comunicação com a inteligência artificial: {err_msg}", 500
 
 
 # ─── GERAÇÃO DE TEXTO ────────────────────────────────────────────────────────
@@ -117,7 +137,6 @@ def correct_text(client, texto: str, banca: str) -> str:
 @app.route("/generate-text", methods=["POST"])
 def api_generate_text():
     data = request.get_json() or {}
-    
     tipo = data.get("tipo", "").strip()
     tema = data.get("tema", "").strip()
     
@@ -138,9 +157,12 @@ def api_generate_text():
         resultado = json.loads(resultado_str)
         return jsonify({"status": "success", "dados": resultado}), 200
     except ValueError as val_err:
-        return jsonify({"status": "error", "message": str(val_err)}), 401
+        return jsonify({"status": "error", "message": str(val_err)}), 400
+    except errors.APIError as api_err:
+        msg, code = handle_gemini_error(api_err)
+        return jsonify({"status": "error", "message": msg}), code
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Erro na geração de conteúdo: {str(e)}"}), 500
+        return jsonify({"status": "error", "message": f"Erro interno no servidor: {str(e)}"}), 500
 
 
 @app.route("/humanize", methods=["POST"])
@@ -162,15 +184,17 @@ def api_humanize():
             }
         }), 200
     except ValueError as val_err:
-        return jsonify({"status": "error", "message": str(val_err)}), 401
+        return jsonify({"status": "error", "message": str(val_err)}), 400
+    except errors.APIError as api_err:
+        msg, code = handle_gemini_error(api_err)
+        return jsonify({"status": "error", "message": msg}), code
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Erro ao humanizar texto: {str(e)}"}), 500
+        return jsonify({"status": "error", "message": f"Erro interno ao humanizar: {str(e)}"}), 500
 
 
 @app.route("/correct", methods=["POST"])
 def api_correct():
     data = request.get_json() or {}
-    
     if "texto" not in data or "banca" not in data:
         return jsonify({"status": "error", "message": "Envie 'texto' e 'banca'."}), 400
 
@@ -189,7 +213,7 @@ def api_correct():
         }), 400
 
     if len(texto) < 100:
-        return jsonify({"status": "error", "message": "Texto muito curto para correção (mínimo 100 caracteres)."}), 400
+        return jsonify({"status": "error", "message": "Texto demasiado curto para correção (mínimo 100 caracteres)."}), 400
 
     try:
         client = get_gemini_client()
@@ -197,16 +221,19 @@ def api_correct():
         resultado = json.loads(resultado_str)
         return jsonify({"status": "success", "banca": banca, "dados": resultado}), 200
     except ValueError as val_err:
-        return jsonify({"status": "error", "message": str(val_err)}), 401
+        return jsonify({"status": "error", "message": str(val_err)}), 400
+    except errors.APIError as api_err:
+        msg, code = handle_gemini_error(api_err)
+        return jsonify({"status": "error", "message": msg}), code
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Erro ao corrigir texto: {str(e)}"}), 500
+        return jsonify({"status": "error", "message": f"Erro interno ao corrigir: {str(e)}"}), 500
 
 
 @app.route("/")
 def root():
     return jsonify({
         "status": "success",
-        "message": "API TextMaster com Gemini AI — funcionando!",
+        "message": "API TextMaster com Gemini AI — a funcionar!",
         "rotas": {
             "POST /generate-text": "Gera textos estruturados",
             "POST /humanize": "Modifica o ritmo de textos artificiais",
