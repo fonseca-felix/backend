@@ -1,35 +1,25 @@
 {
-  "version": 2,
-  "builds": [
+  "version": 1,
+  "rewrites": [
     {
-      "src": "app.py",
-      "use": "@vercel/python"
+      "source": "/generate-text",
+      "destination": "app.py"
     },
     {
-      "src": "index.html",
-      "use": "@vercel/static"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/generate-text",
-      "dest": "app.py"
+      "source": "/humanize",
+      "destination": "app.py"
     },
     {
-      "src": "/humanize",
-      "dest": "app.py"
+      "source": "/correct",
+      "destination": "app.py"
     },
     {
-      "src": "/correct",
-      "dest": "app.py"
+      "source": "/",
+      "destination": "index.html"
     },
     {
-      "src": "/",
-      "dest": "index.html"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "index.html"
+      "source": "/(.*)",
+      "destination": "index.html"
     }
   ]
 }
