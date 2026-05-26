@@ -15,35 +15,39 @@ from config import (
 
 # Carrega as variáveis do arquivo .env local
 load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# Fallback: Tenta buscar a chave no arquivo experimento.py se ela não estiver no ambiente
-if not GEMINI_API_KEY:
-    try:
-        import experimento
-        GEMINI_API_KEY = getattr(experimento, "CHAVE_API", None)
-        if GEMINI_API_KEY:
-            print("GEMINI_API_KEY carregada de experimento.py (CHAVE_API).")
-    except (ImportError, AttributeError, Exception):
-        # Silencia qualquer erro de importação para não quebrar o ambiente de produção
-        pass
-
-# Validação final obrigatória da Chave de API
-if not GEMINI_API_KEY:
-    raise RuntimeError(
-        "GEMINI_API_KEY não encontrada. Adicione sua chave no arquivo .env ou no painel da Vercel."
-    )
-
-# Inicializa o cliente do Gemini usando o SDK correto
-client = genai.Client(api_key=GEMINI_API_KEY)
+DEFAULT_GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 app = Flask(__name__)
 CORS(app)
 
 
+# ─── FUNÇÃO AUXILIAR PARA OBTER O CLIENTE DO GEMINI ─────────────────────────
+
+def get_gemini_client():
+    """
+    Verifica se o usuário enviou uma chave própria no cabeçalho Authorization.
+    Caso contrário, tenta utilizar a chave padrão definida no arquivo .env.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    
+    # Se vier no formato "Bearer CHAVE", extrai apenas a chave
+    if auth_header.startswith("Bearer "):
+        user_key = auth_header.split(" ")[1].strip()
+    else:
+        user_key = auth_header.strip()
+
+    # Determina qual chave utilizar (Prioridade para a do usuário)
+    api_key = user_key if user_key else DEFAULT_GEMINI_API_KEY
+
+    if not api_key:
+        raise ValueError("Chave de API do Gemini não configurada no servidor e nem fornecida pelo usuário.")
+
+    return genai.Client(api_key=api_key)
+
+
 # ─── GERAÇÃO DE TEXTO ────────────────────────────────────────────────────────
 
-def generate_text(tipo: str, tema: str, num_linhas: int, num_paragrafos: int, estilo_extra: str = ""):
+def generate_text(client, tipo: str, tema: str, num_linhas: int, num_paragrafos: int, estilo_extra: str = ""):
     prompt = (
         f"Tipo de texto: {tipo}\n"
         f"Tema: {tema}\n"
@@ -57,7 +61,7 @@ def generate_text(tipo: str, tema: str, num_linhas: int, num_paragrafos: int, es
         model="gemini-2.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
-            system_instruction=get_system_instruction_geracao(),
+            system_instruction=get_system_instruction_geracao(tipo),
             response_mime_type="application/json",
             response_schema=TEXTO_SCHEMA,
             temperature=0.7,
@@ -68,7 +72,7 @@ def generate_text(tipo: str, tema: str, num_linhas: int, num_paragrafos: int, es
 
 # ─── HUMANIZAÇÃO DE TEXTO ────────────────────────────────────────────────────
 
-def humanize_text(texto: str) -> str:
+def humanize_text(client, texto: str) -> str:
     prompt = f"Por favor, reescreva de forma natural e humana o seguinte texto:\n\n{texto}"
     
     instruction = (
@@ -92,7 +96,7 @@ def humanize_text(texto: str) -> str:
 
 # ─── CORREÇÃO DE REDAÇÃO ─────────────────────────────────────────────────────
 
-def correct_text(texto: str, banca: str) -> str:
+def correct_text(client, texto: str, banca: str) -> str:
     prompt = f"Aqui está a minha redação para você corrigir conforme os critérios da banca {banca}:\n\n{texto}"
 
     response = client.models.generate_content(
@@ -129,9 +133,12 @@ def api_generate_text():
     estilo_extra = data.get("estilo_extra", "").strip()
 
     try:
-        resultado_str = generate_text(tipo, tema, num_linhas, num_paragrafos, estilo_extra)
+        client = get_gemini_client()
+        resultado_str = generate_text(client, tipo, tema, num_linhas, num_paragrafos, estilo_extra)
         resultado = json.loads(resultado_str)
         return jsonify({"status": "success", "dados": resultado}), 200
+    except ValueError as val_err:
+        return jsonify({"status": "error", "message": str(val_err)}), 401
     except Exception as e:
         return jsonify({"status": "error", "message": f"Erro na geração de conteúdo: {str(e)}"}), 500
 
@@ -145,8 +152,17 @@ def api_humanize():
         return jsonify({"status": "error", "message": "Envie o 'texto' que deseja humanizar."}), 400
 
     try:
-        texto_humanizado = humanize_text(texto)
-        return jsonify({"status": "success", "texto_humanizado": texto_humanizado}), 200
+        client = get_gemini_client()
+        texto_humanizado = humanize_text(client, texto)
+        return jsonify({
+            "status": "success",
+            "dados": {
+                "texto_humanizado": texto_humanizado,
+                "observacoes": "Texto reestruturado para eliminar cadências robóticas, melhorando a escolha lexical e o ritmo das transições."
+            }
+        }), 200
+    except ValueError as val_err:
+        return jsonify({"status": "error", "message": str(val_err)}), 401
     except Exception as e:
         return jsonify({"status": "error", "message": f"Erro ao humanizar texto: {str(e)}"}), 500
 
@@ -176,14 +192,15 @@ def api_correct():
         return jsonify({"status": "error", "message": "Texto muito curto para correção (mínimo 100 caracteres)."}), 400
 
     try:
-        resultado_str = correct_text(texto, banca)
+        client = get_gemini_client()
+        resultado_str = correct_text(client, texto, banca)
         resultado = json.loads(resultado_str)
         return jsonify({"status": "success", "banca": banca, "dados": resultado}), 200
+    except ValueError as val_err:
+        return jsonify({"status": "error", "message": str(val_err)}), 401
     except Exception as e:
         return jsonify({"status": "error", "message": f"Erro ao corrigir texto: {str(e)}"}), 500
 
-
-# ─── ROTA RAIZ ────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def root():

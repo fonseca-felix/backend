@@ -97,7 +97,7 @@ CORRECAO_SCHEMA = {
 
 _INSTRUCOES_GERACAO = {
     "redação": """
-Você é um professor especialista em redação para vestibular com mais de 20 anos de experiência.
+Você é um professor especialista em redação para vestibular com mais de 20 anos de experience.
 Escreva redações dissertativo-argumentativas com: introdução impactante com tese clara, 
 desenvolvimento com argumentos sólidos e dados, e conclusão com proposta de intervenção.
 Use linguagem formal, coesa, com repertório sociocultural relevante.
